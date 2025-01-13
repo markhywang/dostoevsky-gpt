@@ -1,6 +1,6 @@
 # Dostoevsky GPT
 
-Fyodor Mikhailovich Dostoevsky (1821 - 1881) is a Russian author and novelist, and is arguably one of the greatest novelists in the history of literature. Notably, towards the end of his life, Dostoevsky was in the process of writing a novel titled Nietoshka Nezvanova. However, unfortunately, he passed away before he is able to finish the book.
+Fyodor Mikhailovich Dostoevsky (1821 - 1881) was a Russian author and novelist, and is arguably one of the greatest novelists in the history of literature. Notably, towards the end of his life, Dostoevsky was in the process of writing a novel titled Nietoshka Nezvanova. However, unfortunately, he passed away before he is able to finish the book.
 
 Therefore, for fun of course, I will build my own Transformer GPT model (that is, a decoder-only transformer with character-wise tokenization) inside this notebook that will learn off of all of what is written on the unfinished novel Nietoshka Nezvanova and then generate future text. This future text is what the model thinks should be how the story continues (even though, of course, this is probably not what Dostoevsky himself would have wrote had he finished the book...). Thus, essentially, in the end we can generate and infer our own fully-finished versions of Nietoshka Nezvanova!
 
