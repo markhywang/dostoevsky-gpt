@@ -23,4 +23,6 @@ Credits:
 - The text file for The Brothers Karamazov is directly taken from: https://www.gutenberg.org/ebooks/28054
 - This transformer architecture was inspired by [Andrej Karpathy](https://github.com/karpathy). The link to the GitHub repository can be found here: https://github.com/karpathy/ng-video-lecture
 
+Also, the amazing paper titled "Attention Is All You Need" which first proposed the possibility of Transformer models can be found here: https://arxiv.org/abs/1706.03762
+
 ![alt text](https://github.com/markhywang/Dostoevsky-GPT/blob/main/dostoevsky-image.jpg)
