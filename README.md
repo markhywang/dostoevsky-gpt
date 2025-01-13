@@ -21,6 +21,6 @@ Here are some things a curious learner with an absolute beast of a NVIDIA GPU ca
 Credits:
 - The text file for Netochka Nezvanova is directly taken from: https://www.thetedkarchive.com/library/fyodor-dostoevsky-netochka-nezvanova-an-incomplete-novel
 - The text file for The Brothers Karamazov is directly taken from: https://www.gutenberg.org/ebooks/28054
-- This transformer architecture was inspired by [Andrej Karpathy](https://github.com/karpathy): https://www.youtube.com/watch?v=kCc8FmEb1nY
+- This transformer architecture was inspired by [Andrej Karpathy](https://github.com/karpathy). The link to the GitHub repository can be found here: https://github.com/karpathy/ng-video-lecture
 
 ![alt text](https://github.com/markhywang/Dostoevsky-GPT/blob/main/dostoevsky-image.jpg)
