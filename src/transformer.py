@@ -5,6 +5,8 @@ The paper can be found here: https://arxiv.org/abs/1706.03762
 
 import torch
 from torch import nn
+
+# Get all hyperparameters to be used in the transformer model
 from script import BLOCK_SIZE, N_EMBED, N_HEAD, N_LAYERS, DROPOUT, vocab_size, device
 
 class Head(nn.Module):
