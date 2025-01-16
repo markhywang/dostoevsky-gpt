@@ -85,7 +85,7 @@ class Block(nn.Module):
     """ 
     A single transformer block that performs, in order:
         1. Multi-head self-attention where token vectors communicate with each other
-        2. Forward propagation through a multilayer perceptron network 
+        2. Forward propagation through a rectified multilayer perceptron network 
     """
 
     def __init__(self, n_embed, n_head, block_size, dropout):
