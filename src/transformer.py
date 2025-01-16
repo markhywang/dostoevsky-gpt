@@ -70,7 +70,7 @@ class FeedForward(nn.Module):
         super().__init__()
 
         # The multilayer perceptron network
-        # Note that, confirming to "Attention Is All You Need" paper, the hidden units are size 4 * n_embed
+        # Note that, following the "Attention Is All You Need" paper architecture, the hidden units are size 4 * n_embed
         self.mlp = nn.Sequential(
             nn.Linear(n_embed, 4 * n_embed),
             nn.ReLU(), # Rectified activation function for non-linearity
