@@ -6,25 +6,22 @@ The paper can be found here: https://arxiv.org/abs/1706.03762
 import torch
 from torch import nn
 
-# Get all hyperparameters to be used in the transformer model
-from script import BLOCK_SIZE, N_EMBED, N_HEAD, N_LAYERS, DROPOUT, vocab_size, device
-
 class Head(nn.Module):
     """ One head of self-attention """
 
-    def __init__(self, head_size):
+    def __init__(self, head_size, n_embed, block_size, dropout):
         super().__init__()
 
         # Key, query, and value vectors
-        self.key = nn.Linear(N_EMBED, head_size, bias=False)
-        self.query = nn.Linear(N_EMBED, head_size, bias=False)
-        self.value = nn.Linear(N_EMBED, head_size, bias=False)
+        self.key = nn.Linear(n_embed, head_size, bias=False)
+        self.query = nn.Linear(n_embed, head_size, bias=False)
+        self.value = nn.Linear(n_embed, head_size, bias=False)
 
         # A lower triangular matrix used to perform autoregressive masking
-        self.register_buffer('tril', torch.tril(torch.ones(BLOCK_SIZE, BLOCK_SIZE)))
+        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
         
         # Dropout layer to prevent overfitting the transformer
-        self.dropout = nn.Dropout(DROPOUT)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         B, T, C = x.shape
@@ -47,15 +44,15 @@ class Head(nn.Module):
 class MultiHeadAttention(nn.Module):
     """ Multiple heads of self-attention run parallel to capture more complex language, structures, and semantics """
 
-    def __init__(self, num_heads, head_size):
+    def __init__(self, n_embed, n_head, head_size, block_size, dropout):
         super().__init__()
 
         # Get list of all attention heads that will be run in parallel
-        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        self.heads = nn.ModuleList([Head(head_size, n_embed, block_size, dropout) for _ in range(n_head)])
         
         # Add projection layer and dropout
-        self.proj = nn.Linear(head_size * num_heads, N_EMBED)
-        self.dropout = nn.Dropout(DROPOUT)
+        self.proj = nn.Linear(head_size * n_head, n_embed)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         # Perform self-attention for each head independently
@@ -66,19 +63,19 @@ class MultiHeadAttention(nn.Module):
 
         return out
 
-class FeedFoward(nn.Module):
+class FeedForward(nn.Module):
     """ A simple rectified multilayer perceptron where the vectors are propagated through after self-attention """
 
-    def __init__(self):
+    def __init__(self, n_embed, dropout):
         super().__init__()
 
         # The multilayer perceptron network
-        # Note that, confirming to "Attention Is All You Need" paper, the hidden units are size 4 * N_EMBED
+        # Note that, confirming to "Attention Is All You Need" paper, the hidden units are size 4 * n_embed
         self.mlp = nn.Sequential(
-            nn.Linear(N_EMBED, 4 * N_EMBED),
+            nn.Linear(n_embed, 4 * n_embed),
             nn.ReLU(), # Rectified activation function for non-linearity
-            nn.Linear(4 * N_EMBED, N_EMBED),
-            nn.Dropout(DROPOUT), # Dropout to prevent overfitting
+            nn.Linear(4 * n_embed, n_embed),
+            nn.Dropout(dropout), # Dropout to prevent overfitting
         )
 
     def forward(self, x):
@@ -91,17 +88,19 @@ class Block(nn.Module):
         2. Forward propagation through a multilayer perceptron network 
     """
 
-    def __init__(self, n_head):
-        # N_EMBED: embedding dimension, n_head: the number of heads we'd like
+    def __init__(self, n_embed, n_head, block_size, dropout):
+        # n_embed: embedding dimension, n_head: the number of heads we'd like
         super().__init__()
-        head_size = N_EMBED // n_head
+        
+        # Get size of each attention head based on embedding dimension and number of heads requested
+        self.head_size = n_embed // n_head
 
-        self.sa = MultiHeadAttention(n_head, head_size)
-        self.ffwd = FeedFoward(N_EMBED)
+        self.sa = MultiHeadAttention(n_embed, n_head, self.head_size, block_size, dropout)
+        self.ffwd = FeedForward(n_embed, dropout)
         
         # Add layer norms to re-scale data into range (0, 1) for faster model convergence and training
-        self.ln1 = nn.LayerNorm(N_EMBED)
-        self.ln2 = nn.LayerNorm(N_EMBED)
+        self.ln1 = nn.LayerNorm(n_embed)
+        self.ln2 = nn.LayerNorm(n_embed)
 
     def forward(self, x):
         # Note that transformers use residual connections between each step
@@ -116,21 +115,24 @@ class Block(nn.Module):
 class Transformer(nn.Module):
     """ The complete Multi-Head Self-Attention Decoder Transformer architecture """
 
-    def __init__(self):
+    def __init__(self, n_layers, n_embed, block_size, vocab_size, n_head, dropout):
         super().__init__()
 
         # Token and position embedding tables to convert tokenized indices and positions to vectors
-        self.token_embedding_table = nn.Embedding(vocab_size, N_EMBED)
-        self.position_embedding_table = nn.Embedding(BLOCK_SIZE, N_EMBED)
+        self.token_embedding_table = nn.Embedding(vocab_size, n_embed)
+        self.position_embedding_table = nn.Embedding(block_size, n_embed)
         
         # The sequence containing the number of transformer blocks to process
-        self.blocks = nn.Sequential(*[Block(n_head=N_HEAD) for _ in range(N_LAYERS)])
+        self.blocks = nn.Sequential(*[Block(n_embed, n_head, block_size, dropout) for _ in range(n_layers)])
         
         # Add layer norm for faster model convergence and training
-        self.norm = nn.LayerNorm(N_EMBED)
+        self.norm = nn.LayerNorm(n_embed)
         
         # Linear layer that takes embedding vectors to prediction logits (to be processed)
-        self.lm_head = nn.Linear(N_EMBED, vocab_size)
+        self.lm_head = nn.Linear(n_embed, vocab_size)
+        
+        # Store block size
+        self.block_size = block_size
         
         # A better way to initialize ways
         self.apply(self._init_weights)
@@ -146,6 +148,10 @@ class Transformer(nn.Module):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     def forward(self, embedding_vectors):
+        # Get current device
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        
+        # Get batch and time dimension
         B, T = embedding_vectors.shape
         
         # Get position and token embeddings
@@ -165,8 +171,8 @@ class Transformer(nn.Module):
         """ Generate text using Transformer inference """
         for _ in range(max_new_tokens):
             
-            # Only consider the last BLOCK_SIZE tokens (maximum scope of the transformer)
-            embedding_cond = embedding[:, -BLOCK_SIZE:]
+            # Only consider the last block_size tokens (maximum scope of the transformer)
+            embedding_cond = embedding[:, -self.block_size:]
             
             # Pass through transformer and get values for the last time step
             logits = self(embedding_cond)
