@@ -13,7 +13,7 @@ Here are some things a curious learner with an absolute beast of a NVIDIA GPU ca
     - max number of tokens the model can process at once
     - more training epochs,
     - etc.
-2. Use a more robust tokenization technique such as Byte-Pair Encoding (BPE), WordPiece, etc.
+2. Use a more robust tokenization technique such as Byte-Pair Encoding (BPE). In fact, a file containing such tokenizer is provided for you to try!
 3. First pre-train the transformer on some of Dostoevsky's other works to learn more about his writing style and any linguistic/contextual complexities
    to better adapt the model to his writings. Afterwards, fine-tune the model specifically on Nietoshka Nezvanova to have the model generate text specific to that novel
    - In fact, a text file of The Brothers Karamazov, Dostoevsky's longest work, is attached under ```/data``` for you to try and pre-train.
