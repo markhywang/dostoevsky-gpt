@@ -1,5 +1,3 @@
-# This file is based off of: https://github.com/mrdbourke/pytorch-deep-learning
-
 import torch
 import matplotlib.pyplot as plt
 import numpy as np
@@ -247,10 +245,6 @@ def download_data(source: str,
     
     Returns:
         pathlib.Path to downloaded data.
-    
-    Example usage:
-        download_data(source="https://github.com/mrdbourke/pytorch-deep-learning/raw/main/data/pizza_steak_sushi.zip",
-                      destination="pizza_steak_sushi")
     """
     # Setup path to data folder
     data_path = Path("data/")
