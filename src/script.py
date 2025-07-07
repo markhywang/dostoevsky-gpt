@@ -9,6 +9,8 @@ It can be configured and run from the command line.
 
 import argparse
 import torch
+# Enable TensorFloat32 for better performance
+torch.set_float32_matmul_precision('high')
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
 from torch.nn import functional as F
@@ -52,13 +54,13 @@ def get_args():
 
     # Training Hyperparameters
     parser.add_argument("--batch-size", type=int, default=64, help="Batch size for training.")
-    parser.add_argument("--epochs", type=int, default=10, help="Number of pre-training epochs.")
-    parser.add_argument("--finetune-epochs", type=int, default=3, help="Number of fine-tuning epochs. Set to 0 to disable.")
+    parser.add_argument("--epochs", type=int, default=5, help="Number of pre-training epochs.")
+    parser.add_argument("--finetune-epochs", type=int, default=5, help="Number of fine-tuning epochs. Set to 0 to disable.")
     parser.add_argument("--learning-rate", type=float, default=3e-4, help="Learning rate for Adam optimizer during pre-training.")
     parser.add_argument("--finetune-lr", type=float, default=1e-5, help="Learning rate for the fine-tuning phase.")
     parser.add_argument("--weight-decay", type=float, default=1e-4, help="Weight decay for Adam optimizer.")
     parser.add_argument("--grad-clip", type=float, default=1.0, help="Clip gradients at this value. Set to 0 to disable.")
-    parser.add_argument("--use-amp", action="store_true", help="Use Automatic Mixed Precision for training.")
+    parser.add_argument("--use-amp", action="store_true", default=True, help="Use Automatic Mixed Precision for training.")
     parser.add_argument("--log-interval", type=int, default=10, help="Log progress every N batches.")
     parser.add_argument("--save-interval", type=int, default=1, help="Save checkpoint every N epochs.")
 
@@ -66,6 +68,8 @@ def get_args():
     parser.add_argument("--num-generate", type=int, default=1000, help="Number of characters to generate.")
     parser.add_argument("--print-steps", type=int, default=250, help="How often to print training loss (in epochs).")
     parser.add_argument("--verbose", action="store_true", help="Print detailed information during execution.")
+    parser.add_argument("--netochka-focus", action="store_true", default=True, 
+                        help="Focus training more on Netochka Nezvanova by repeating its text.")
 
     return parser.parse_args()
 
@@ -249,6 +253,36 @@ def read_text_from_files(paths):
     return full_text
 
 
+def read_text_with_focus(paths, focus_path=None, repeat_factor=3):
+    """Reads text from files with optional emphasis on a specific file."""
+    print(f"Reading text from: {', '.join(map(str, paths))}")
+    full_text = ""
+    focus_text = ""
+    
+    # First read all texts
+    for path in paths:
+        if not path.is_file():
+            print(f"Error: Data file not found at {path}")
+            exit(1)
+        with open(path, 'r', encoding='utf-8') as f:
+            text = f.read()
+            print(f"Read {len(text):,} characters from {path}")
+            full_text += text
+            
+            # Store the focus text separately if this is the focus path
+            if focus_path and path.name == focus_path.name:
+                focus_text = text
+    
+    # If we have a focus path, repeat its content
+    if focus_path and focus_text:
+        print(f"Repeating {focus_path} content {repeat_factor-1} additional times for emphasis")
+        for _ in range(repeat_factor - 1):
+            full_text += focus_text
+            
+    print(f"Total text length after focus adjustments: {len(full_text):,} characters")
+    return full_text
+
+
 def create_char_mappings(text):
     """Creates character-to-integer mappings from text."""
     chars = sorted(list(set(text)))
@@ -419,7 +453,14 @@ def main():
     print("\n=== Loading Data & Building Vocabulary ===")
     data_start_time = timer()
     all_paths = list(set(args.pretrain_data_path + ([args.finetune_data_path] if args.finetune_data_path else [])))
-    combined_text = read_text_from_files(all_paths)
+    
+    # Use focused text loading if netochka_focus is enabled
+    if args.netochka_focus:
+        repeat_factor = 3  # Can adjust this value as needed
+        combined_text = read_text_with_focus(all_paths, args.finetune_data_path, repeat_factor=repeat_factor)
+    else:
+        combined_text = read_text_from_files(all_paths)
+        
     vocab_size, encode, decode = create_char_mappings(combined_text)
     print(f"Vocabulary size: {vocab_size} unique characters")
     print(f"Data loading completed in {timer() - data_start_time:.2f} seconds")
@@ -452,7 +493,14 @@ def main():
     # --- 3. Pre-training Phase ---
     print("\n=== Starting Pre-training Phase ===")
     pretrain_start_time = timer()
-    pretrain_text = read_text_from_files(args.pretrain_data_path)
+    
+    # Use focused text loading if netochka_focus is enabled
+    if args.netochka_focus:
+        repeat_factor = 3
+        pretrain_text = read_text_with_focus(args.pretrain_data_path, args.finetune_data_path, repeat_factor=repeat_factor)
+    else:
+        pretrain_text = read_text_from_files(args.pretrain_data_path)
+        
     pretrain_dataloader = create_dataloaders(pretrain_text, encode, args.block_size, args.batch_size, device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     pretrain_losses = train_model(
@@ -476,7 +524,7 @@ def main():
     if args.finetune_data_path and args.finetune_epochs > 0:
         print("\n=== Starting Fine-tuning Phase ===")
         finetune_start_time = timer()
-        finetune_text = read_text_from_files([args.finetune_data_path])
+        finetune_text = read_text_from_files([args.finetune_data_path])  # No need for repetition in fine-tuning
         finetune_dataloader = create_dataloaders(finetune_text, encode, args.block_size, args.batch_size, device)
         
         # Use a new optimizer with a lower learning rate for fine-tuning
