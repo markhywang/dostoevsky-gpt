@@ -15,6 +15,11 @@ from torch.nn import functional as F
 import matplotlib.pyplot as plt
 from timeit import default_timer as timer
 from pathlib import Path
+import os
+import psutil
+from tqdm import tqdm
+import time
+import datetime
 
 # ---------------------------------------------------------------------------
 # Argument Parsing & Global Config
@@ -54,13 +59,29 @@ def get_args():
     parser.add_argument("--weight-decay", type=float, default=1e-4, help="Weight decay for Adam optimizer.")
     parser.add_argument("--grad-clip", type=float, default=1.0, help="Clip gradients at this value. Set to 0 to disable.")
     parser.add_argument("--use-amp", action="store_true", help="Use Automatic Mixed Precision for training.")
+    parser.add_argument("--log-interval", type=int, default=10, help="Log progress every N batches.")
+    parser.add_argument("--save-interval", type=int, default=1, help="Save checkpoint every N epochs.")
 
     # Generation & Logging
     parser.add_argument("--num-generate", type=int, default=1000, help="Number of characters to generate.")
     parser.add_argument("--print-steps", type=int, default=250, help="How often to print training loss (in epochs).")
+    parser.add_argument("--verbose", action="store_true", help="Print detailed information during execution.")
 
     return parser.parse_args()
 
+
+# ---------------------------------------------------------------------------
+# Utility Functions
+# ---------------------------------------------------------------------------
+
+def get_memory_usage():
+    """Get the current memory usage in MB."""
+    process = psutil.Process(os.getpid())
+    return process.memory_info().rss / (1024 * 1024)
+
+def format_time(seconds):
+    """Format time in seconds to a human-readable string."""
+    return str(datetime.timedelta(seconds=int(seconds)))
 
 # ---------------------------------------------------------------------------
 # Model Definition
@@ -176,13 +197,18 @@ class Transformer(nn.Module):
         return logits, loss
 
     def generate(self, idx, max_new_tokens):
-        for _ in range(max_new_tokens):
-            idx_cond = idx[:, -self.block_size:]
-            logits, _ = self(idx_cond)
-            logits = logits[:, -1, :]
-            probs = F.softmax(logits, dim=-1)
-            idx_next = torch.multinomial(probs, num_samples=1)
-            idx = torch.cat((idx, idx_next), dim=1)
+        print("Generating text...")
+        # Use tqdm for the generation process
+        with tqdm(total=max_new_tokens, desc="Generating", leave=True) as pbar:
+            for _ in range(max_new_tokens):
+                idx_cond = idx[:, -self.block_size:]
+                logits, _ = self(idx_cond)
+                logits = logits[:, -1, :]
+                probs = F.softmax(logits, dim=-1)
+                idx_next = torch.multinomial(probs, num_samples=1)
+                idx = torch.cat((idx, idx_next), dim=1)
+                pbar.update(1)
+        print("Text generation complete!")
         return idx
 
 
@@ -216,7 +242,10 @@ def read_text_from_files(paths):
             print(f"Error: Data file not found at {path}")
             exit(1)
         with open(path, 'r', encoding='utf-8') as f:
-            full_text += f.read()
+            text = f.read()
+            print(f"Read {len(text):,} characters from {path}")
+            full_text += text
+    print(f"Total text length: {len(full_text):,} characters")
     return full_text
 
 
@@ -233,9 +262,12 @@ def create_char_mappings(text):
 
 def create_dataloaders(text, encode_fn, block_size, batch_size, device):
     """Creates a DataLoader for training."""
+    print(f"Creating data loader with batch size {batch_size}...")
+    start_time = time.time()
     data = torch.tensor(encode_fn(text), dtype=torch.long, device=device)
     dataset = DostoevskyDataset(data, block_size)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    print(f"Data loader created with {len(dataset):,} samples in {time.time() - start_time:.2f} seconds")
     return dataloader
 
 
@@ -244,45 +276,100 @@ def create_dataloaders(text, encode_fn, block_size, batch_size, device):
 # ---------------------------------------------------------------------------
 
 
-def train_model(model, dataloader, optimizer, epochs, print_steps, grad_clip, use_amp, device):
+def train_model(model, dataloader, optimizer, epochs, print_steps, grad_clip, use_amp, device, log_interval=10, save_interval=1, save_path=None, verbose=False):
     """Main training loop with support for AMP and gradient clipping."""
     print("Starting training...")
     start_time = timer()
     all_losses = []
+    best_loss = float('inf')
     
     use_amp = use_amp and "cuda" in device
-    scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
+    scaler = torch.amp.GradScaler(enabled=use_amp)
 
-    for epoch in range(epochs):
-        model.train()
-        epoch_loss = 0.0
-        for X, y in dataloader:
-            # Data is already on the correct device from create_dataloaders
-            optimizer.zero_grad(set_to_none=True)
+    # Calculate total batches for better progress tracking
+    total_batches = len(dataloader) * epochs
+    
+    print(f"Training on {device} | AMP: {use_amp} | Gradient Clipping: {grad_clip if grad_clip > 0 else 'disabled'}")
+    print(f"Initial memory usage: {get_memory_usage():.2f} MB")
 
-            with torch.autocast(device_type=device.split(':')[0], dtype=torch.float16, enabled=use_amp):
-                _, loss = model(X, y)
+    # Create an overall progress bar for all epochs
+    with tqdm(total=total_batches, desc="Overall Progress", position=0) as overall_pbar:
+        for epoch in range(epochs):
+            model.train()
+            epoch_loss = 0.0
             
-            epoch_loss += loss.item()
+            # Create progress bar for this epoch
+            epoch_desc = f"Epoch {epoch+1}/{epochs}"
+            with tqdm(total=len(dataloader), desc=epoch_desc, position=1, leave=False) as pbar:
+                batch_start_time = time.time()
+                
+                for batch_idx, (X, y) in enumerate(dataloader):
+                    # Data is already on the correct device from create_dataloaders
+                    optimizer.zero_grad(set_to_none=True)
 
-            scaler.scale(loss).backward()
+                    with torch.autocast(device_type=device.split(':')[0], dtype=torch.float16, enabled=use_amp):
+                        _, loss = model(X, y)
+                    
+                    epoch_loss += loss.item()
 
-            if grad_clip > 0:
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                    scaler.scale(loss).backward()
+
+                    if grad_clip > 0:
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                    
+                    scaler.step(optimizer)
+                    scaler.update()
+                    
+                    # Update progress bars with current loss
+                    current_loss = loss.item()
+                    pbar.set_postfix(loss=f"{current_loss:.4f}")
+                    pbar.update(1)
+                    overall_pbar.update(1)
+                    
+                    # Log detailed information at specified intervals
+                    if verbose and batch_idx % log_interval == 0:
+                        batch_time = time.time() - batch_start_time
+                        samples_per_sec = X.size(0) / batch_time
+                        memory_usage = get_memory_usage()
+                        print(f"\nBatch {batch_idx+1}/{len(dataloader)} | "
+                              f"Loss: {current_loss:.4f} | "
+                              f"Speed: {samples_per_sec:.1f} samples/s | "
+                              f"Memory: {memory_usage:.1f} MB")
+                        batch_start_time = time.time()
+
+            avg_epoch_loss = epoch_loss / len(dataloader)
+            all_losses.append(avg_epoch_loss)
             
-            scaler.step(optimizer)
-            scaler.update()
-
-        avg_epoch_loss = epoch_loss / len(dataloader)
-        all_losses.append(avg_epoch_loss)
-
-        if (epoch + 1) % print_steps == 0:
-            print(f"Epoch: {epoch + 1}/{epochs} | Train Loss: {avg_epoch_loss:.4f}")
+            # Print epoch summary
+            time_elapsed = timer() - start_time
+            print(f"\nEpoch: {epoch+1}/{epochs} | Train Loss: {avg_epoch_loss:.4f} | "
+                  f"Time: {format_time(time_elapsed)} | Memory: {get_memory_usage():.1f} MB")
+            
+            # Save checkpoints at specified intervals or when loss improves
+            if save_path and (epoch+1) % save_interval == 0:
+                checkpoint_path = save_path.with_stem(f"{save_path.stem}_epoch{epoch+1}")
+                print(f"Saving checkpoint to {checkpoint_path}")
+                torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'loss': avg_epoch_loss,
+                }, checkpoint_path)
+            
+            # Save best model
+            if avg_epoch_loss < best_loss:
+                best_loss = avg_epoch_loss
+                if save_path:
+                    best_model_path = save_path.with_stem(f"{save_path.stem}_best")
+                    print(f"New best model! Saving to {best_model_path}")
+                    torch.save(model.state_dict(), best_model_path)
 
     end_time = timer()
     total_time = end_time - start_time
-    print(f"\nTraining finished in {total_time:.2f} seconds.")
+    print(f"\nTraining finished in {format_time(total_time)} ({total_time:.2f} seconds)")
+    print(f"Best loss: {best_loss:.4f}")
+    print(f"Final memory usage: {get_memory_usage():.2f} MB")
     return all_losses
 
 
@@ -294,7 +381,9 @@ def plot_loss_curve(losses):
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
     plt.legend(["Training Loss"])
+    plt.savefig('assets/loss_curve.png')
     plt.show()
+    print(f"Loss curve saved to assets/loss_curve.png")
 
 
 # ---------------------------------------------------------------------------
@@ -307,23 +396,37 @@ def main():
     args = get_args()
 
     # Setup
+    start_time = timer()
+    print("\n=== Dostoevsky Transformer ===")
+    print(f"Start time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
     torch.manual_seed(42)
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
+    
+    if device == 'cuda':
+        print(f"CUDA device: {torch.cuda.get_device_name(0)}")
+        print(f"CUDA memory allocated: {torch.cuda.memory_allocated(0) / 1024**2:.2f} MB")
+        print(f"CUDA memory reserved: {torch.cuda.memory_reserved(0) / 1024**2:.2f} MB")
 
     # Ensure output directories exist
     args.save_model_path.parent.mkdir(parents=True, exist_ok=True)
     args.output_text_path.parent.mkdir(parents=True, exist_ok=True)
+    Path('assets').mkdir(exist_ok=True)
 
     # --- 1. Data Loading and Vocabulary ---
     # The vocabulary is built from all text sources combined to ensure consistency.
-    print("\n--- Loading Data & Building Vocabulary ---")
+    print("\n=== Loading Data & Building Vocabulary ===")
+    data_start_time = timer()
     all_paths = list(set(args.pretrain_data_path + ([args.finetune_data_path] if args.finetune_data_path else [])))
     combined_text = read_text_from_files(all_paths)
     vocab_size, encode, decode = create_char_mappings(combined_text)
-    print(f"Vocabulary size: {vocab_size}")
+    print(f"Vocabulary size: {vocab_size} unique characters")
+    print(f"Data loading completed in {timer() - data_start_time:.2f} seconds")
 
     # --- 2. Model Initialization ---
+    print("\n=== Model Initialization ===")
+    model_start_time = timer()
     model = Transformer(
         vocab_size=vocab_size,
         n_embed=args.n_embed,
@@ -338,42 +441,75 @@ def main():
     try:
         model = torch.compile(model)
         print("Model compiled successfully (PyTorch 2.0+).")
-    except Exception:
-        print("Could not compile model (requires PyTorch 2.0+).")
+    except Exception as e:
+        print(f"Could not compile model (requires PyTorch 2.0+): {str(e)}")
 
-    print(f"Model has {sum(p.numel() for p in model.parameters())/1e6:.2f}M parameters")
+    num_params = sum(p.numel() for p in model.parameters())
+    print(f"Model has {num_params:,} parameters ({num_params/1e6:.2f}M)")
+    print(f"Model initialization completed in {timer() - model_start_time:.2f} seconds")
     all_losses = []
 
     # --- 3. Pre-training Phase ---
-    print("\n--- Starting Pre-training Phase ---")
+    print("\n=== Starting Pre-training Phase ===")
+    pretrain_start_time = timer()
     pretrain_text = read_text_from_files(args.pretrain_data_path)
     pretrain_dataloader = create_dataloaders(pretrain_text, encode, args.block_size, args.batch_size, device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
-    pretrain_losses = train_model(model, pretrain_dataloader, optimizer, args.epochs, args.print_steps, args.grad_clip, args.use_amp, device)
+    pretrain_losses = train_model(
+        model=model, 
+        dataloader=pretrain_dataloader, 
+        optimizer=optimizer, 
+        epochs=args.epochs, 
+        print_steps=args.print_steps, 
+        grad_clip=args.grad_clip, 
+        use_amp=args.use_amp, 
+        device=device,
+        log_interval=args.log_interval,
+        save_interval=args.save_interval,
+        save_path=args.save_model_path,
+        verbose=args.verbose
+    )
     all_losses.extend(pretrain_losses)
+    print(f"Pre-training completed in {format_time(timer() - pretrain_start_time)}")
 
     # --- 4. Fine-tuning Phase ---
     if args.finetune_data_path and args.finetune_epochs > 0:
-        print("\n--- Starting Fine-tuning Phase ---")
+        print("\n=== Starting Fine-tuning Phase ===")
+        finetune_start_time = timer()
         finetune_text = read_text_from_files([args.finetune_data_path])
         finetune_dataloader = create_dataloaders(finetune_text, encode, args.block_size, args.batch_size, device)
         
         # Use a new optimizer with a lower learning rate for fine-tuning
         finetune_optimizer = torch.optim.AdamW(model.parameters(), lr=args.finetune_lr, weight_decay=args.weight_decay)
         
-        finetune_losses = train_model(model, finetune_dataloader, finetune_optimizer, args.finetune_epochs, args.print_steps, args.grad_clip, args.use_amp, device)
+        finetune_losses = train_model(
+            model=model, 
+            dataloader=finetune_dataloader, 
+            optimizer=finetune_optimizer, 
+            epochs=args.finetune_epochs, 
+            print_steps=args.print_steps, 
+            grad_clip=args.grad_clip, 
+            use_amp=args.use_amp, 
+            device=device,
+            log_interval=args.log_interval,
+            save_interval=args.save_interval,
+            save_path=args.save_model_path.with_stem(f"{args.save_model_path.stem}_finetune"),
+            verbose=args.verbose
+        )
         all_losses.extend(finetune_losses)
-
+        print(f"Fine-tuning completed in {format_time(timer() - finetune_start_time)}")
 
     # --- 5. Save, Generate, and Plot ---
-    print(f"\nSaving final model to {args.save_model_path}")
+    print(f"\n=== Saving Final Model ===")
+    print(f"Saving final model to {args.save_model_path}")
     torch.save(model.state_dict(), args.save_model_path)
 
     # Generate text
-    print("\n--- Generated Text ---")
+    print("\n=== Generating Text ===")
     context = torch.zeros((1, 1), dtype=torch.long, device=device)
     generated_chars = decode(model.generate(context, max_new_tokens=args.num_generate)[0].tolist())
-    print(generated_chars)
+    print("Sample of generated text:")
+    print(generated_chars[:500] + "...")
     print("------------------------")
 
     # Write to file
@@ -383,7 +519,16 @@ def main():
 
     # Plot loss if requested
     if args.plot_loss:
+        print("\n=== Plotting Loss Curve ===")
         plot_loss_curve(all_losses)
+
+    # Print final summary
+    total_time = timer() - start_time
+    print("\n=== Summary ===")
+    print(f"Total execution time: {format_time(total_time)} ({total_time:.2f} seconds)")
+    print(f"Peak memory usage: {get_memory_usage():.2f} MB")
+    print(f"End time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("Done!")
 
 
 if __name__ == '__main__':
