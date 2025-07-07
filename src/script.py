@@ -508,8 +508,8 @@ def main():
     print("\n=== Generating Text ===")
     context = torch.zeros((1, 1), dtype=torch.long, device=device)
     generated_chars = decode(model.generate(context, max_new_tokens=args.num_generate)[0].tolist())
-    print("Sample of generated text:")
-    print(generated_chars[:500] + "...")
+    print("Generated text:")
+    print(generated_chars)
     print("------------------------")
 
     # Write to file
