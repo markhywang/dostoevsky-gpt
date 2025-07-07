@@ -25,6 +25,6 @@ Credits:
 
 Also, the amazing paper titled "Attention Is All You Need" which first proposed the possibility of Transformer models can be found here: https://arxiv.org/abs/1706.03762
 
-![alt text](https://github.com/markhywang/Dostoevsky-GPT/blob/main/dostoevsky-image.jpg)
+![alt text](https://github.com/markhywang/dostoevsky-gpt/blob/main/assets/dostoevsky-image.jpg)
 
 Image taken from: https://en.wikipedia.org/wiki/Fyodor_Dostoevsky
