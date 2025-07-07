@@ -251,7 +251,7 @@ def train_model(model, dataloader, optimizer, epochs, print_steps, grad_clip, us
     all_losses = []
     
     use_amp = use_amp and "cuda" in device
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
 
     for epoch in range(epochs):
         model.train()
